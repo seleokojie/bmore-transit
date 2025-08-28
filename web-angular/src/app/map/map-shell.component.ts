@@ -12,6 +12,7 @@ export class MapShellComponent {
   private api = inject(ApiService);
   vehicles = signal<Vehicle[]>([]);
   map?: any;
+  private mapReady = false;
   sourceId = 'vehicles-src';
   layerId = 'vehicles-layer';
   currentStyle = 'liberty';
@@ -28,6 +29,9 @@ export class MapShellComponent {
   };
 
   constructor() {
+    // Note: You may see console warnings "Expected value to be of type number, but found null instead"
+    // These come from the vector tile data in OpenFreeMap styles and are harmless - they don't affect functionality
+    
     // Initial poll
     this.poll();
     // Poll every 5s
@@ -38,14 +42,16 @@ export class MapShellComponent {
 
   ngAfterViewInit() {
     const styleOverride = (window as any)['MAP_STYLE_URL'] as string | undefined;
+    let initialStyle = this.currentStyle; // default 'liberty'
+    
     if (styleOverride) {
-      this.currentStyle = 'custom';
       this.styles['custom'] = styleOverride;
+      initialStyle = 'custom';
     }
 
     this.map = new maplibregl.Map({
       container: 'map',
-      style: this.styles[this.currentStyle],
+      style: this.styles[initialStyle],
       center: [-76.6122, 39.2904],
       zoom: 12,
       pitch: 0,
@@ -57,23 +63,36 @@ export class MapShellComponent {
     this.map.addControl(new maplibregl.ScaleControl({ unit: 'imperial' }));
 
     // Ensure vehicles layer exists on initial load and whenever the style changes
-    this.map.on('load', () => this.ensureVehicleLayer());
-    this.map.on('style.load', () => this.ensureVehicleLayer());
+    this.map.on('load', () => {
+      this.mapReady = true;
+      this.ensureVehicleLayer();
+    });
+    this.map.on('style.load', () => {
+      this.mapReady = true;
+      this.ensureVehicleLayer();
+    });
   }
 
   setBase(styleKey: 'liberty' | 'bright' | 'positron' | '3d') {
     this.currentStyle = styleKey;
     const url = this.styles[styleKey];
     if (!this.map || !url) return;
+    
+    this.mapReady = false; // Reset flag when changing styles
     this.map.setStyle(url);
+    
     // 3D settings
     if (styleKey === '3d') {
       this.map.once('style.load', () => {
+        this.mapReady = true;
+        this.ensureVehicleLayer();
         this.map.easeTo({ pitch: 60, bearing: -17.6, duration: 500 });
         this.enable3DBuildings();
       });
     } else {
       this.map.once('style.load', () => {
+        this.mapReady = true;
+        this.ensureVehicleLayer();
         this.map.easeTo({ pitch: 0, bearing: 0, duration: 300 });
         this.disable3DBuildings();
       });
@@ -107,22 +126,17 @@ export class MapShellComponent {
   }
 
   private ensureVehicleLayer() {
-    if (!this.map) return;
-    
-    console.log('Ensuring vehicle layer...');
+    if (!this.map || !this.mapReady) return;
     
     // Remove existing source and layer if they exist (cleanup)
     if (this.map.getLayer(this.layerId)) {
-      console.log('Removing existing vehicle layer');
       this.map.removeLayer(this.layerId);
     }
     if (this.map.getSource(this.sourceId)) {
-      console.log('Removing existing vehicle source');
       this.map.removeSource(this.sourceId);
     }
     
     const vehicleData = this.vehiclesToGeoJSON(this.vehicles());
-    console.log(`Adding vehicle source with ${vehicleData.features.length} vehicles`);
     
     // Add source with current vehicle data
     this.map.addSource(this.sourceId, { 
@@ -130,7 +144,6 @@ export class MapShellComponent {
       data: vehicleData
     });
     
-    console.log('Adding vehicle layer');
     // Add layer
     this.map.addLayer({
       id: this.layerId,
@@ -139,7 +152,7 @@ export class MapShellComponent {
       paint: {
         'circle-radius': 5,
         'circle-stroke-width': 1,
-        'circle-color': ['get','color'],
+        'circle-color': ['coalesce', ['get','color'], '#1d4ed8'],
         'circle-stroke-color': '#ffffff',
       },
     });
@@ -147,52 +160,83 @@ export class MapShellComponent {
 
   private poll() {
   this.api.vehicles().subscribe((vs: Vehicle[]) => {
-      console.log(`Polled ${vs.length} vehicles`);
       this.vehicles.set(vs);
       this.updateVehicleLayer();
     });
   }
 
   private updateVehicleLayer() {
-    if (!this.map || !this.map.getSource) return;
+    if (!this.map || !this.map.getSource || !this.mapReady) return;
     const src = this.map.getSource(this.sourceId);
     if (!src) {
       // Source doesn't exist, recreate the whole layer
-      console.log('Vehicle source missing during update, ensuring layer...');
       this.ensureVehicleLayer();
       return;
     }
-    console.log(`Updating vehicle source with ${this.vehicles().length} vehicles`);
     src.setData(this.vehiclesToGeoJSON(this.vehicles()));
   }
 
   private vehiclesToGeoJSON(vs: Vehicle[]) {
     return {
       type: 'FeatureCollection',
-      features: vs.map(v => ({
-        type: 'Feature',
-        properties: { id: v.id, route_id: v.route_id, ts: v.ts, color: this.colorForRoute(v.route_id) },
-        geometry: { type: 'Point', coordinates: [v.lon, v.lat] }
-      }))
+      features: vs
+        .filter(v => {
+          // More robust filtering for valid coordinates
+          const lat = Number(v.lat);
+          const lon = Number(v.lon);
+          return v.lat != null && 
+                 v.lon != null && 
+                 !isNaN(lat) && 
+                 !isNaN(lon) && 
+                 isFinite(lat) && 
+                 isFinite(lon) &&
+                 lat >= -90 && lat <= 90 &&
+                 lon >= -180 && lon <= 180;
+        })
+        .map(v => {
+          // Ensure all numeric values are properly sanitized
+          const lat = Number(v.lat);
+          const lon = Number(v.lon);
+          const speed = v.speed != null && !isNaN(Number(v.speed)) ? Number(v.speed) : 0;
+          const heading = v.heading != null && !isNaN(Number(v.heading)) ? Number(v.heading) : 0;
+          const ts = v.ts != null && !isNaN(Number(v.ts)) ? Number(v.ts) : Math.floor(Date.now() / 1000);
+          
+          return {
+            type: 'Feature',
+            properties: { 
+              id: String(v.id || 'unknown'), 
+              route_id: String(v.route_id || 'unknown'), 
+              ts: ts,
+              color: this.colorForRoute(v.route_id),
+              speed: speed,
+              heading: heading
+            },
+            geometry: { type: 'Point', coordinates: [lon, lat] }
+          };
+        })
     };
   }
 
   private loadRoutes() {
     this.api.routes().subscribe((rows: RouteRow[]) => {
-      const map = new Map<string,string>();
+      const map: { [key: string]: string } = {};
       for (const r of rows) {
         const color = this.normalizeHex(r.color);
         const ids = [r.route_id, this.unprefixed(r.route_id)];
-        for (const id of ids) if (id) map.set(id, color);
+        for (const id of ids) if (id) map[id] = color;
       }
-      this.routeColorMap = map;
+      // Convert object to Map
+      this.routeColorMap.clear();
+      for (const key in map) {
+        this.routeColorMap.set(key, map[key]);
+      }
       this.updateVehicleLayer();
     });
   }
 
   private normalizeHex(c?: string): string {
     if (!c) return '#1d4ed8';
-    const hex = c.startsWith('#') ? c : `#${c}`;
+    const hex = c.indexOf('#') === 0 ? c : `#${c}`;
     return /^#?[0-9a-fA-F]{6}$/.test(hex) ? hex.replace(/^#?/, '#').toUpperCase() : '#1d4ed8';
   }
 
