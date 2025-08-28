@@ -24,6 +24,8 @@ export class MapShellComponent {
   private palette = ['#2563EB','#F59E0B','#10B981','#EF4444','#8B5CF6','#06B6D4','#84CC16','#D946EF','#F97316','#22D3EE'];
   routes = signal<RouteRow[]>([]);
   currentRouteId: string | null = null;
+  // Hide out-of-service vehicles by default. TODO: add UI toggle.
+  private showOutOfService = false;
   unit: 'mph' | 'kmh' = ((globalThis as any).localStorage?.getItem('unit') as any) === 'kmh' ? 'kmh' : 'mph';
   private popup: maplibregl.Popup | null = null;
   private pinned = false;
@@ -320,6 +322,8 @@ export class MapShellComponent {
       type: 'FeatureCollection',
       features: vs
         .filter(v => {
+          // Hide out-of-service (no trip_id) unless toggled on
+          if (!this.showOutOfService && !(v as any).trip_id) return false;
           // More robust filtering for valid coordinates
           const lat = Number(v.lat);
           const lon = Number(v.lon);
