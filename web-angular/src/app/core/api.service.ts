@@ -44,4 +44,8 @@ export class ApiService {
   routeStreets(routeId: string) {
     return this.http.get<any>(`${API_BASE}/routes/${routeId}/streets`);
   }
+
+  routeStreetsBbox(routeId: string) {
+    return this.http.get<[number,number,number,number] | null>(`${API_BASE}/routes/${routeId}/bbox`);
+  }
 }
