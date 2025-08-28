@@ -23,14 +23,20 @@ export class MapShellComponent {
   }
 
   ngAfterViewInit() {
+    const styleUrl = (window as any)['MAP_STYLE_URL'] || 'https://tiles.openfreemap.org/styles/liberty';
     this.map = new maplibregl.Map({
       container: 'map',
-      style: 'https://demotiles.maplibre.org/style.json', // Free MapLibre demo style
+      style: styleUrl, // runtime configurable basemap style
       center: [-76.6122, 39.2904],
-      zoom: 12
+      zoom: 12,
+      pitch: 45,
+      bearing: -17.6
     });
 
     this.map.on('load', () => {
+      // Basic map UI controls
+      this.map.addControl(new maplibregl.NavigationControl(), 'top-right');
+      this.map.addControl(new maplibregl.ScaleControl({ unit: 'imperial' }));
       this.map.addSource(this.sourceId, { type: 'geojson', data: this.vehiclesToGeoJSON([]) });
       this.map.addLayer({
         id: this.layerId,

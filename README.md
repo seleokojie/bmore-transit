@@ -22,6 +22,10 @@ If static GTFS is not available, `/routes` will fall back to route IDs derived f
 - Timezone: America/New_York
 - `make openapi` writes `packages/schemas/openapi.json`
 
+### Basemap (MapLibre)
+- Defaults to OpenFreeMap Liberty style (no token): `https://tiles.openfreemap.org/styles/liberty`.
+- You can override at runtime by setting `MAP_STYLE_URL` in `.env` (injected into `env.js`).
+
 ### Static GTFS seeding
 - Single feed: set `GTFS_STATIC_URL=<zip>` then `make seed`.
 - Multiple feeds: set `GTFS_STATIC_SOURCES` as comma‑separated `key=url` pairs, then `make seed`.

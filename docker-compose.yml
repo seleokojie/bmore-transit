@@ -36,10 +36,10 @@ services:
     build: ./web-angular
     environment:
       - API_BASE=http://localhost:8080
+      - MAP_STYLE_URL=${MAP_STYLE_URL:-}
       - TZ=${TZ:-America/New_York}
     ports: ["4200:80"]
     depends_on: [api]
 
 volumes:
   pgdata:
-
