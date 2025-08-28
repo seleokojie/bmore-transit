@@ -22,3 +22,6 @@ format:
 openapi:
 	curl -s http://localhost:8080/openapi.json -o packages/schemas/openapi.json || true
 
+.PHONY: streets
+streets:
+	docker compose exec -T ingest python -m src.match_routes
