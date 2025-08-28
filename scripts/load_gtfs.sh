@@ -132,8 +132,8 @@ copy_stage_from_files() {
   fi
   if [ -f "$dir/unzipped/trips.txt" ]; then
     echo "trips -> staging_trips_${skey}"
-    # Always use standard staging table column order: trip_id,route_id,service_id,...
-    cat "$dir/unzipped/trips.txt" | psql_exec -c "\\copy staging_trips_${skey}(trip_id,route_id,service_id,trip_headsign,trip_short_name,direction_id,block_id,shape_id,wheelchair_accessible,bikes_allowed) FROM STDIN CSV HEADER"
+    # Column order must match the CSV file: route_id,service_id,trip_id,...
+    cat "$dir/unzipped/trips.txt" | psql_exec -c "\\copy staging_trips_${skey}(route_id,service_id,trip_id,trip_headsign,trip_short_name,direction_id,block_id,shape_id,wheelchair_accessible,bikes_allowed) FROM STDIN CSV HEADER"
   fi
   if [ -f "$dir/unzipped/stop_times.txt" ]; then
     echo "stop_times -> staging_stop_times_${skey}"
@@ -176,7 +176,7 @@ ON CONFLICT (route_id) DO NOTHING;
 
 -- trips (only insert trips that have valid route references)
 INSERT INTO trips(trip_id,route_id,service_id,direction_id,shape_id)
-SELECT concat('${prefix}', ':', trip_id), concat('${prefix}', ':', route_id), service_id, direction_id, concat('${prefix}', ':', shape_id)
+SELECT concat('${prefix}', ':', trip_id), concat('${prefix}', ':', route_id), service_id, CAST(direction_id AS INTEGER), concat('${prefix}', ':', shape_id)
 FROM staging_trips_${skey} st
 WHERE EXISTS (SELECT 1 FROM routes r WHERE r.route_id = concat('${prefix}', ':', st.route_id))
 ON CONFLICT (trip_id) DO NOTHING;
