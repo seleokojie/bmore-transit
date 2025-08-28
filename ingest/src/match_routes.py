@@ -15,13 +15,17 @@ VALHALLA_URL = os.getenv("VALHALLA_URL", "http://valhalla:8002")
 SAMPLE_METERS = int(os.getenv("MATCH_SAMPLE_METERS", "40"))
 COSTING = os.getenv("MATCH_COSTING", "auto")
 SEARCH_RADIUS = int(os.getenv("MATCH_SEARCH_RADIUS", "50"))
+VALHALLA_MAX_POINTS = int(os.getenv("VALHALLA_MAX_POINTS", "15000"))
+MATCH_WORKERS = int(os.getenv("MATCH_WORKERS", "2"))
+MATCH_OVERWRITE = os.getenv("MATCH_OVERWRITE", "false").lower() in ("1", "true", "yes", "y", "on")
 
 
 def densified_shapes_geojson(route_id: str):
     sql = """
-      SELECT ST_AsGeoJSON(ST_Segmentize(geom::geography, %s)::geometry) AS g
-      FROM shapes s
-      JOIN trips t ON t.shape_id = s.shape_id
+      SELECT DISTINCT s.shape_id,
+             ST_AsGeoJSON(ST_Segmentize(s.geom::geography, %s)::geometry) AS g
+      FROM trips t
+      JOIN shapes s ON s.shape_id = t.shape_id
       WHERE t.route_id = %s
     """
     out = []
@@ -120,68 +124,47 @@ def chunk_points(points, max_size=15000):
 
 
 def process_route(route_id: str):
+    t0 = time.time()
     lines = densified_shapes_geojson(route_id)
     if not lines:
         print(f"no shapes for {route_id}")
         return
-    
+
     total_points = 0
-    
     for ln in lines:
-        points = geojson_lines_to_points(ln)
-        total_points += len(points)
-        
+        total_points += len(geojson_lines_to_points(ln))
+
     print(f"processing {route_id}: {total_points} points across {len(lines)} shapes")
-    
-    # If total points exceed limit, process each shape individually
-    if total_points > 15000:
-        print(f"  splitting into individual shapes due to size ({total_points} > 15000)")
-        all_multilines = []
-        
-        for i, ln in enumerate(lines):
-            points = geojson_lines_to_points(ln)
-            if len(points) > 15000:
-                print(f"  shape {i} too large ({len(points)} points), chunking...")
-                for chunk_idx, chunk in enumerate(chunk_points(points)):
-                    try:
-                        resp = call_valhalla(chunk)
-                        mls = edges_to_multilines(resp)
-                        if mls and mls.get("coordinates"):
-                            all_multilines.extend(mls["coordinates"])
-                        print(f"    chunk {chunk_idx}: {len(chunk)} points -> matched")
-                    except Exception as e:
-                        print(f"    chunk {chunk_idx} error: {e}")
-            else:
+
+    all_segments: list[list[list[float]]] = []
+    for i, ln in enumerate(lines):
+        pts = geojson_lines_to_points(ln)
+        if not pts:
+            continue
+        if len(pts) > VALHALLA_MAX_POINTS:
+            print(f"  shape {i} large ({len(pts)}), chunking...")
+            for chunk_idx, chunk in enumerate(chunk_points(pts, max_size=VALHALLA_MAX_POINTS)):
                 try:
-                    resp = call_valhalla(points)
+                    resp = call_valhalla(chunk)
                     mls = edges_to_multilines(resp)
                     if mls and mls.get("coordinates"):
-                        all_multilines.extend(mls["coordinates"])
-                    print(f"  shape {i}: {len(points)} points -> matched")
+                        all_segments.extend(mls["coordinates"])  # type: ignore
+                    print(f"    chunk {chunk_idx}: {len(chunk)} pts -> matched")
                 except Exception as e:
-                    print(f"  shape {i} error: {e}")
-        
-        # Combine all matched multilines
-        if all_multilines:
-            combined_mls = {"type": "MultiLineString", "coordinates": all_multilines}
-            upsert_route_geom(route_id, combined_mls, lines)
-            print(f"matched: {route_id} ({len(all_multilines)} segments)")
+                    print(f"    chunk {chunk_idx} error: {e}")
         else:
-            upsert_route_geom(route_id, None, lines)
-            print(f"no matches: {route_id}")
-    else:
-        # Original logic for smaller routes
-        points = []
-        for ln in lines:
-            points.extend(geojson_lines_to_points(ln))
-        try:
-            resp = call_valhalla(points)
-            mls = edges_to_multilines(resp)
-            upsert_route_geom(route_id, mls, lines)
-            print("matched:", route_id)
-        except Exception as e:
-            print("valhalla error for", route_id, e)
-            upsert_route_geom(route_id, None, lines)
+            try:
+                resp = call_valhalla(pts)
+                mls = edges_to_multilines(resp)
+                if mls and mls.get("coordinates"):
+                    all_segments.extend(mls["coordinates"])  # type: ignore
+                print(f"  shape {i}: {len(pts)} pts -> matched")
+            except Exception as e:
+                print(f"  shape {i} error: {e}")
+
+    combined = {"type": "MultiLineString", "coordinates": all_segments} if all_segments else None
+    upsert_route_geom(route_id, combined, lines)
+    print(f"done {route_id} in {time.time()-t0:.1f}s; segments={len(all_segments)}")
 
 
 def main():
@@ -192,10 +175,37 @@ def main():
         with conn() as c, c.cursor() as cur:
             cur.execute("SELECT DISTINCT route_id FROM trips ORDER BY route_id")
             rids = [r["route_id"] for r in cur.fetchall()]
-    for rid in rids:
-        process_route(rid)
+
+    # Skip routes that already have geometry unless overwrite requested
+    if not MATCH_OVERWRITE:
+        with conn() as c, c.cursor() as cur:
+            cur.execute("SELECT route_id FROM route_streets_geom")
+            have = {r["route_id"] for r in cur.fetchall()}
+        before = len(rids)
+        rids = [r for r in rids if r not in have]
+        print(f"skipping {before - len(rids)} routes with existing geometry (set MATCH_OVERWRITE=true to reprocess)")
+
+    if not rids:
+        print("nothing to process")
+        return
+
+    # Parallel processing across routes
+    if MATCH_WORKERS <= 1:
+        for rid in rids:
+            process_route(rid)
+    else:
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        print(f"processing {len(rids)} routes with {MATCH_WORKERS} workers")
+        with ThreadPoolExecutor(max_workers=MATCH_WORKERS) as ex:
+            futs = {ex.submit(process_route, rid): rid for rid in rids}
+            for fut in as_completed(futs):
+                rid = futs[fut]
+                try:
+                    fut.result()
+                except Exception as e:
+                    print(f"route {rid} failed: {e}")
 
 
 if __name__ == "__main__":
     main()
-

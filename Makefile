@@ -24,4 +24,11 @@ openapi:
 
 .PHONY: streets
 streets:
-	docker compose exec -T ingest python -m src.match_routes
+	docker compose exec -T \
+	  -e ROUTE_IDS \
+	  -e MATCH_SAMPLE_METERS \
+	  -e MATCH_SEARCH_RADIUS \
+	  -e MATCH_WORKERS \
+	  -e MATCH_OVERWRITE \
+	  -e VALHALLA_MAX_POINTS \
+	  ingest python -m src.match_routes

@@ -36,7 +36,7 @@ services:
     image: ghcr.io/valhalla/valhalla:latest
     environment:
       - use_tiles_ignore_pbf=True
-      - server_threads=2
+      - server_threads=4
     volumes:
       - valhalla_tiles:/valhalla
       - ./infra/valhalla/start.sh:/start.sh:ro
