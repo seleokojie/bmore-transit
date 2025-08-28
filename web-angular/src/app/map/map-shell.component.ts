@@ -249,9 +249,27 @@ export class MapShellComponent {
       source: this.sourceId,
       paint: {
         'circle-radius': 5,
-        'circle-stroke-width': 1,
-        'circle-color': ['coalesce', ['get','color'], '#1d4ed8'],
-        'circle-stroke-color': '#ffffff',
+        'circle-stroke-width': 2,
+        // Fill color logic: not in service = gray, in service = route color or green fallback
+        'circle-color': [
+          'case',
+          // If trip_id is null/undefined/empty, vehicle is not in service -> gray
+          ['any', 
+            ['==', ['get', 'trip_id'], null],
+            ['==', ['get', 'trip_id'], ''],
+            ['!', ['has', 'trip_id']]
+          ], '#6B7280', // Dark gray for not in service
+          // If in service and has a valid route color (not null, not empty), use route color
+          ['all',
+            ['has', 'color'],
+            ['!=', ['get', 'color'], null],
+            ['!=', ['get', 'color'], '']
+          ], ['get', 'color'],
+          // All other in-service vehicles (no valid route color) -> green
+          '#10B981'
+        ],
+        // All markers have solid black stroke
+        'circle-stroke-color': '#000000',
       },
     });
 
@@ -298,7 +316,7 @@ export class MapShellComponent {
   }
 
   private vehiclesToGeoJSON(vs: Vehicle[]) {
-    return {
+    const result = {
       type: 'FeatureCollection',
       features: vs
         .filter(v => {
@@ -322,19 +340,22 @@ export class MapShellComponent {
           const heading = v.heading != null && !isNaN(Number(v.heading)) ? Number(v.heading) : 0;
           const ts = v.ts != null && !isNaN(Number(v.ts)) ? Number(v.ts) : Math.floor(Date.now() / 1000);
           
+          const tripId = (v as any).trip_id || undefined;
+          const routeColor = this.colorForRoute(v.route_id);
+          
           return {
             type: 'Feature',
             properties: { 
               id: String(v.id || 'unknown'), 
               route_id: String(v.route_id || 'unknown'), 
               ts: ts,
-              color: this.colorForRoute(v.route_id),
+              color: routeColor,
               speed: speed,
               heading: heading,
               feed: (v as any).feed || undefined,
               label: (v as any).label || undefined,
               license_plate: (v as any).license_plate || undefined,
-              trip_id: (v as any).trip_id || undefined,
+              trip_id: tripId,
               current_status: (v as any).current_status ?? undefined,
               stop_id: (v as any).stop_id || undefined,
               current_stop_sequence: (v as any).current_stop_sequence ?? undefined,
@@ -345,15 +366,19 @@ export class MapShellComponent {
           };
         })
     };
+    
+    return result;
   }
 
   private loadRoutes() {
     this.api.routes().subscribe((rows: RouteRow[]) => {
       const map: { [key: string]: string } = {};
       this.routeMeta.clear();
+      
       for (const r of rows) {
         const color = this.normalizeHex(r.color);
         const ids = [r.route_id, this.unprefixed(r.route_id)];
+        
         for (const id of ids) if (id) {
           map[id] = color;
           this.routeMeta.set(id, r);
@@ -364,6 +389,7 @@ export class MapShellComponent {
       for (const key in map) {
         this.routeColorMap.set(key, map[key]);
       }
+      
       this.routes.set(rows);
       this.updateVehicleLayer();
     });
@@ -372,7 +398,14 @@ export class MapShellComponent {
   private normalizeHex(c?: string): string {
     if (!c) return '#1d4ed8';
     const hex = c.indexOf('#') === 0 ? c : `#${c}`;
-    return /^#?[0-9a-fA-F]{6}$/.test(hex) ? hex.replace(/^#?/, '#').toUpperCase() : '#1d4ed8';
+    const normalized = /^#?[0-9a-fA-F]{6}$/.test(hex) ? hex.replace(/^#?/, '#').toUpperCase() : '#1d4ed8';
+    
+    // If route color is too close to gray (#6B7280), use #5D6555 instead
+    if (normalized === '#808285' || normalized === '#9CA3AF' || normalized === '#808080') {
+      return '#5D6555';
+    }
+    
+    return normalized;
   }
 
   private unprefixed(id?: string): string {
@@ -381,10 +414,15 @@ export class MapShellComponent {
     return i >= 0 ? id.slice(i+1) : id;
   }
 
-  private colorForRoute(routeId?: string): string {
+  private colorForRoute(routeId?: string): string | null {
     const raw = routeId || '';
     const found = this.routeColorMap.get(raw) || this.routeColorMap.get(this.unprefixed(raw));
     if (found) return found;
+    
+    // Return null for unknown routes - let MapLibre expression handle the fallback
+    if (raw === '' || raw === 'UNKNOWN') return null;
+    
+    // Generate color for other routes that aren't explicitly unknown
     let h = 0;
     for (let i = 0; i < raw.length; i++) h = (h * 31 + raw.charCodeAt(i)) >>> 0;
     return this.palette[h % this.palette.length];
@@ -580,22 +618,31 @@ export class MapShellComponent {
   private popupHTML(f: any): string {
     const p = f?.properties || {};
     const rid = p.route_id || 'UNKNOWN';
-    const title = this.routeDisplay(rid);
+    const inService = !!p.trip_id;
+    const title = inService ? this.routeDisplay(rid) : 'Not in Service';
     const updated = this.timeAgo(Number(p.ts || 0));
     const speed = this.formatSpeed(Number(p.speed));
     const heading = this.formatHeading(Number(p.heading));
     const veh = p.label || p.license_plate || p.id || 'Vehicle';
     const feed = p.feed ? `<div><span style="opacity:.7">Feed:</span> ${this.escape(p.feed)}</div>` : '';
-    const status = this.statusLabel(p.current_status);
-    const statusHtml = status ? `<div><span style="opacity:.7">Status:</span> ${status}</div>` : '';
+    const move = this.statusLabel(p.current_status);
+    const moveHtml = move ? `<div><span style="opacity:.7">Movement:</span> ${move}</div>` : '';
+    const serviceHtml = `<div><span style="opacity:.7">Service:</span> ${inService ? 'In Service' : 'Not in Service'}</div>`;
     const occ = this.occupancyLabel(p.occupancy_status);
     const occPct = (p.occupancy_percentage != null && isFinite(Number(p.occupancy_percentage))) ? ` (${Math.round(Number(p.occupancy_percentage))}%)` : '';
     const occHtml = occ ? `<div><span style="opacity:.7">Occupancy:</span> ${occ}${occPct}</div>` : '';
 
+    // Use same color logic as markers
+    let markerColor = '#6B7280'; // Dark gray for not in service
+    if (inService) {
+      // In service: use route color if available, otherwise green
+      markerColor = p.color || '#10B981';
+    }
+
     return `
       <div style="min-width:220px; font: 13px/1.35 system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;">
         <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
-          <span style="display:inline-block; width:10px; height:10px; border-radius:50%; background:${this.colorForRoute(rid)};"></span>
+          <span style="display:inline-block; width:10px; height:10px; border-radius:50%; background:${markerColor};"></span>
           <div style="font-weight:600;">${this.escape(title)}</div>
         </div>
         <div style="margin:4px 0 8px; color:#374151;">
@@ -604,7 +651,8 @@ export class MapShellComponent {
           <div><span style="opacity:.7">Speed:</span> ${speed}</div>
           <div><span style="opacity:.7">Heading:</span> ${heading}</div>
           ${feed}
-          ${statusHtml}
+          ${serviceHtml}
+          ${moveHtml}
           ${occHtml}
         </div>
         <div style="margin-top:8px; display:flex; gap:6px; align-items:center;">
