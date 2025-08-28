@@ -36,7 +36,6 @@ services:
     build: ./web-angular
     environment:
       - API_BASE=http://localhost:8080
-      - MAPBOX_ACCESS_TOKEN=${MAPBOX_ACCESS_TOKEN:-}
       - TZ=${TZ:-America/New_York}
     ports: ["4200:80"]
     depends_on: [api]

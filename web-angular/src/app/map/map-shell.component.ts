@@ -1,7 +1,6 @@
 import { Component, inject, signal } from '@angular/core';
 import { ApiService, Vehicle } from '../core/api.service';
-
-declare const mapboxgl: any;
+import maplibregl from 'maplibre-gl';
 
 @Component({
   selector: 'app-map-shell',
@@ -24,13 +23,9 @@ export class MapShellComponent {
   }
 
   ngAfterViewInit() {
-    const token = (window as any)['MAPBOX_ACCESS_TOKEN'] || '';
-    if (!token) console.warn('MAPBOX_ACCESS_TOKEN missing; the map may not render.');
-    (mapboxgl as any).accessToken = token;
-
-    this.map = new mapboxgl.Map({
+    this.map = new maplibregl.Map({
       container: 'map',
-      style: 'https://demotiles.maplibre.org/style.json', // works without token; swap to mapbox style if you set token
+      style: 'https://demotiles.maplibre.org/style.json', // Free MapLibre demo style
       center: [-76.6122, 39.2904],
       zoom: 12
     });

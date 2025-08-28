@@ -19,7 +19,7 @@
     "@angular/router": "latest",
     "rxjs": "latest",
     "zone.js": "latest",
-    "mapbox-gl": "latest"
+    "maplibre-gl": "latest"
   },
   "devDependencies": {
     "@angular-devkit/build-angular": "latest",

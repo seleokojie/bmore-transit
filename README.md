@@ -36,5 +36,4 @@ If static GTFS is not available, `/routes` will fall back to route IDs derived f
 - Lint/format/tests via `make format` and `make test`.
 
 ## TODOs
-- Swap map style to Mapbox if token provided (default uses MapLibre demo style).
 - Implement bbox filtering and `/stops/{id}/arrivals` from Redis once GTFS-RT TripUpdates are parsed.

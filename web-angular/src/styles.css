@@ -1,2 +1,2 @@
-@import "mapbox-gl/dist/mapbox-gl.css";
+@import "maplibre-gl/dist/maplibre-gl.css";
 html, body { height: 100%; margin: 0; }
