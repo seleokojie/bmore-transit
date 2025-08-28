@@ -9,7 +9,8 @@ RUN npm run build
 # Serve
 FROM nginx:alpine
 WORKDIR /usr/share/nginx/html
-COPY --from=build /app/dist/web-angular/browser .
+RUN rm -rf ./*
+COPY --from=build /app/dist/web-angular/browser/* .
 
 # Inject runtime env into env.js for the app to read
 RUN mkdir -p /docker-entrypoint.d
