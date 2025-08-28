@@ -41,3 +41,10 @@ CREATE INDEX IF NOT EXISTS idx_stops_geom ON stops USING GIST(geom);
 CREATE INDEX IF NOT EXISTS idx_routes_type ON routes(type);
 CREATE INDEX IF NOT EXISTS idx_trips_route ON trips(route_id);
 CREATE INDEX IF NOT EXISTS idx_stop_times_trip ON stop_times(trip_id);
+
+-- Overlay streets geometry (map-matched polylines per route)
+CREATE TABLE IF NOT EXISTS route_streets_geom(
+  route_id TEXT PRIMARY KEY,
+  geom geometry(MultiLineString, 4326),
+  updated_at TIMESTAMPTZ DEFAULT now()
+);

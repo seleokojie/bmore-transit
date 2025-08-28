@@ -22,4 +22,8 @@ export class ApiService {
   routeShape(routeId: string) {
     return this.http.get<any>(`${API_BASE}/routes/${routeId}/shape`);
   }
+
+  routeStreets(routeId: string) {
+    return this.http.get<any>(`${API_BASE}/routes/${routeId}/streets`);
+  }
 }

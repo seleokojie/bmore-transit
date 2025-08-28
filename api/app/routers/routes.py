@@ -56,3 +56,21 @@ def route_shape(route_id: str):
         cur.execute(sql, (route_id,))
         row = cur.fetchone()
         return row["fc"] or {"type": "FeatureCollection", "features": []}
+
+
+@router.get("/{route_id}/streets")
+def route_streets(route_id: str):
+    sql = """
+      SELECT json_build_object(
+        'type','FeatureCollection',
+        'features', CASE WHEN geom IS NULL THEN '[]'::json ELSE json_build_array(
+          json_build_object('type','Feature','geometry', ST_AsGeoJSON(geom)::json, 'properties', json_build_object('route_id', route_id))
+        ) END
+      ) AS fc
+      FROM route_streets_geom
+      WHERE route_id = %s
+    """
+    with conn() as c, c.cursor() as cur:
+        cur.execute(sql, (route_id,))
+        row = cur.fetchone()
+        return (row and row["fc"]) or {"type": "FeatureCollection", "features": []}

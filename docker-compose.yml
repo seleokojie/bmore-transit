@@ -32,6 +32,17 @@ services:
       - TZ=${TZ:-America/New_York}
     depends_on: [db, redis]
 
+  valhalla:
+    image: ghcr.io/valhalla/valhalla:latest
+    environment:
+      - use_tiles_ignore_pbf=True
+      - server_threads=2
+    volumes:
+      - valhalla_tiles:/valhalla
+      - ./infra/valhalla/start.sh:/start.sh:ro
+    command: ["/bin/bash","/start.sh"]
+    ports: ["8002:8002"]
+
   web:
     build: ./web-angular
     environment:
@@ -43,3 +54,4 @@ services:
 
 volumes:
   pgdata:
+  valhalla_tiles:
