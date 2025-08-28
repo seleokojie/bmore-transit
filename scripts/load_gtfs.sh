@@ -65,9 +65,9 @@ CREATE TABLE staging_routes_${skey}(
   as_route TEXT
 );
 CREATE TABLE staging_trips_${skey}(
+  trip_id TEXT, 
   route_id TEXT, 
   service_id TEXT, 
-  trip_id TEXT, 
   trip_headsign TEXT,
   trip_short_name TEXT,
   direction_id INT, 
@@ -132,7 +132,8 @@ copy_stage_from_files() {
   fi
   if [ -f "$dir/unzipped/trips.txt" ]; then
     echo "trips -> staging_trips_${skey}"
-    cat "$dir/unzipped/trips.txt" | psql_exec -c "\\copy staging_trips_${skey} FROM STDIN CSV HEADER"
+    # Always use standard staging table column order: trip_id,route_id,service_id,...
+    cat "$dir/unzipped/trips.txt" | psql_exec -c "\\copy staging_trips_${skey}(trip_id,route_id,service_id,trip_headsign,trip_short_name,direction_id,block_id,shape_id,wheelchair_accessible,bikes_allowed) FROM STDIN CSV HEADER"
   fi
   if [ -f "$dir/unzipped/stop_times.txt" ]; then
     echo "stop_times -> staging_stop_times_${skey}"
@@ -148,7 +149,12 @@ copy_stage_from_files() {
   fi
   if [ -f "$dir/unzipped/shapes.txt" ]; then
     echo "shapes -> staging_shapes_${skey}"
-    cat "$dir/unzipped/shapes.txt" | psql_exec -c "\\copy staging_shapes_${skey} FROM STDIN CSV HEADER"
+    # Clean and preprocess the file before importing
+    tmp_shapes=$(mktemp)
+    # Remove empty lines, Windows line endings, and ensure proper formatting
+    sed '/^[[:space:]]*$/d' "$dir/unzipped/shapes.txt" | tr -d '\r' > "$tmp_shapes"
+    cat "$tmp_shapes" | psql_exec -c "\\copy staging_shapes_${skey} FROM STDIN CSV HEADER"
+    rm -f "$tmp_shapes"
   fi
 }
 
@@ -168,16 +174,18 @@ SELECT concat('${prefix}', ':', route_id), COALESCE(NULLIF(route_short_name,''),
 FROM staging_routes_${skey}
 ON CONFLICT (route_id) DO NOTHING;
 
--- trips
+-- trips (only insert trips that have valid route references)
 INSERT INTO trips(trip_id,route_id,service_id,direction_id,shape_id)
 SELECT concat('${prefix}', ':', trip_id), concat('${prefix}', ':', route_id), service_id, direction_id, concat('${prefix}', ':', shape_id)
-FROM staging_trips_${skey}
+FROM staging_trips_${skey} st
+WHERE EXISTS (SELECT 1 FROM routes r WHERE r.route_id = concat('${prefix}', ':', st.route_id))
 ON CONFLICT (trip_id) DO NOTHING;
 
--- stop_times
+-- stop_times (only insert stop_times for valid trips)
 INSERT INTO stop_times(trip_id,arrival_time,departure_time,stop_id,stop_sequence)
 SELECT concat('${prefix}', ':', trip_id), arrival_time, departure_time, concat('${prefix}', ':', stop_id), stop_sequence
-FROM staging_stop_times_${skey}
+FROM staging_stop_times_${skey} sst
+WHERE EXISTS (SELECT 1 FROM trips t WHERE t.trip_id = concat('${prefix}', ':', sst.trip_id))
 ON CONFLICT (trip_id, stop_sequence) DO NOTHING;
 
 -- shapes
