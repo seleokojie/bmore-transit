@@ -46,11 +46,17 @@ def update_vehicles_union(feeds: list[str]):
     all_vs = []
     for f in feeds:
         raw = r.get(f"vehicles:current:{f}")
-        if raw:
-            try:
-                all_vs.extend(json.loads(raw))
-            except Exception:
-                continue
+        if not raw:
+            continue
+        try:
+            items = json.loads(raw)
+            # annotate with feed for downstream display
+            for it in items:
+                if isinstance(it, dict):
+                    it.setdefault("feed", f)
+            all_vs.extend(items)
+        except Exception:
+            continue
     write_current_vehicles(all_vs)
 
 
