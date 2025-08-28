@@ -1,4 +1,4 @@
-import os, requests
+import os, requests, socket
 
 VEH_FEED = os.getenv("GTFS_RT_VEHICLES_URL")
 TRIP_FEED = os.getenv("GTFS_RT_TRIP_UPDATES_URL")
@@ -37,6 +37,24 @@ def _headers_for(url: str | None, extra: dict | None = None):
 def fetch_bytes(url: str | None, headers: dict | None = None):
     if not url:
         return None
-    resp = requests.get(url, headers=_headers_for(url, headers), timeout=10)
-    resp.raise_for_status()
-    return resp.content
+    
+    # Pre-resolve DNS
+    try:
+        from urllib.parse import urlparse
+        parsed = urlparse(url)
+        hostname = parsed.hostname
+        if hostname:
+            ip = socket.gethostbyname(hostname)
+            print(f"DNS resolution for {hostname}: {ip}")
+    except Exception as dns_error:
+        print(f"DNS pre-resolution error for {url}: {dns_error}")
+        # Continue, let requests handle it
+    
+    # Create a new session for each request to avoid connection pool issues
+    session = requests.Session()
+    try:
+        resp = session.get(url, headers=_headers_for(url, headers), timeout=10)
+        resp.raise_for_status()
+        return resp.content
+    finally:
+        session.close()
