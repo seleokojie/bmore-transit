@@ -73,6 +73,16 @@ def _parse_vehicles(pb_bytes: bytes):
         vid = v.vehicle.id if v.vehicle and v.vehicle.id else (ent.id or "")
         route_id = v.trip.route_id if v.trip and v.trip.route_id else ""
         ts = int(v.timestamp) if v.timestamp else ts_fallback
+        vehicle_label = v.vehicle.label if (hasattr(v, "vehicle") and v.vehicle and hasattr(v.vehicle, "label")) else None
+        license_plate = v.vehicle.license_plate if (hasattr(v, "vehicle") and v.vehicle and hasattr(v.vehicle, "license_plate")) else None
+        trip_id = v.trip.trip_id if (hasattr(v, "trip") and v.trip and hasattr(v.trip, "trip_id")) else None
+        current_status = int(v.current_status) if hasattr(v, "current_status") and v.current_status is not None else None
+        stop_id = v.stop_id if hasattr(v, "stop_id") else None
+        current_stop_sequence = int(v.current_stop_sequence) if hasattr(v, "current_stop_sequence") and v.current_stop_sequence is not None else None
+        occupancy_status = int(v.occupancy_status) if hasattr(v, "occupancy_status") and v.occupancy_status is not None else None
+        # occupancy_percentage is not guaranteed in all bindings; use getattr defensively
+        occupancy_percentage = getattr(v, "occupancy_percentage", None)
+
         out.append(
             {
                 "id": vid or f"veh_{len(out)}",
@@ -82,6 +92,14 @@ def _parse_vehicles(pb_bytes: bytes):
                 "speed": float(pos.speed) if pos.speed else None,
                 "heading": int(pos.bearing) if pos.bearing else None,
                 "ts": ts,
+                "label": vehicle_label,
+                "license_plate": license_plate,
+                "trip_id": trip_id,
+                "current_status": current_status,
+                "stop_id": stop_id,
+                "current_stop_sequence": current_stop_sequence,
+                "occupancy_status": occupancy_status,
+                "occupancy_percentage": occupancy_percentage,
             }
         )
     return out
