@@ -1,10 +1,12 @@
 import { Component, inject, signal } from '@angular/core';
+import { CommonModule } from '@angular/common';
 import { ApiService, Vehicle, RouteRow } from '../core/api.service';
 import maplibregl from 'maplibre-gl';
 
 @Component({
   selector: 'app-map-shell',
   standalone: true,
+  imports: [CommonModule],
   templateUrl: './map-shell.component.html',
   styleUrls: ['./map-shell.component.scss'],
 })
@@ -19,6 +21,8 @@ export class MapShellComponent {
   // Route-colored markers
   private routeColorMap = new Map<string, string>();
   private palette = ['#2563EB','#F59E0B','#10B981','#EF4444','#8B5CF6','#06B6D4','#84CC16','#D946EF','#F97316','#22D3EE'];
+  routes = signal<RouteRow[]>([]);
+  currentRouteId: string | null = null;
 
   styles: Record<string, string> = {
     liberty: 'https://tiles.openfreemap.org/styles/liberty',
@@ -70,6 +74,16 @@ export class MapShellComponent {
     this.map.on('style.load', () => {
       this.mapReady = true;
       this.ensureVehicleLayer();
+      this.ensureRouteLayer();
+      
+      // Handle 3D building setup if we're in 3D mode
+      if (this.currentStyle === '3d') {
+        this.map.easeTo({ pitch: 60, bearing: -17.6, duration: 500 });
+        this.enable3DBuildings();
+      } else {
+        this.map.easeTo({ pitch: 0, bearing: 0, duration: 300 });
+        this.disable3DBuildings();
+      }
     });
   }
 
@@ -81,22 +95,43 @@ export class MapShellComponent {
     this.mapReady = false; // Reset flag when changing styles
     this.map.setStyle(url);
     
-    // 3D settings
-    if (styleKey === '3d') {
-      this.map.once('style.load', () => {
-        this.mapReady = true;
-        this.ensureVehicleLayer();
+    let handled = false;
+    
+    const handleStyleLoaded = () => {
+      if (handled) return; // Prevent double execution
+      handled = true;
+      
+      this.mapReady = true;
+      this.ensureVehicleLayer();
+      this.ensureRouteLayer();
+      
+      // Apply style-specific settings after layer is created
+      if (styleKey === '3d') {
         this.map.easeTo({ pitch: 60, bearing: -17.6, duration: 500 });
         this.enable3DBuildings();
-      });
-    } else {
-      this.map.once('style.load', () => {
-        this.mapReady = true;
-        this.ensureVehicleLayer();
+      } else {
         this.map.easeTo({ pitch: 0, bearing: 0, duration: 300 });
         this.disable3DBuildings();
-      });
-    }
+      }
+    };
+    
+    // Try multiple events that can indicate style is ready
+    this.map.once('style.load', () => {
+      handleStyleLoaded();
+    });
+    
+    this.map.once('styledata', (e: any) => {
+      if (e.dataType === 'style') {
+        handleStyleLoaded();
+      }
+    });
+    
+    // Backup: check after a short delay if neither event fired
+    setTimeout(() => {
+      if (!handled && this.map.isStyleLoaded()) {
+        handleStyleLoaded();
+      }
+    }, 1000);
   }
 
   private enable3DBuildings() {
@@ -111,8 +146,8 @@ export class MapShellComponent {
         minzoom: 15,
         paint: {
           'fill-extrusion-color': '#aaa',
-          'fill-extrusion-height': ['coalesce', ['get', 'render_height'], 10],
-          'fill-extrusion-base': ['coalesce', ['get', 'render_min_height'], 0],
+          'fill-extrusion-height': ['case', ['!=', ['typeof', ['get', 'render_height']], 'number'], 10, ['max', ['get', 'render_height'], 0]],
+          'fill-extrusion-base': ['case', ['!=', ['typeof', ['get', 'render_min_height']], 'number'], 0, ['max', ['get', 'render_min_height'], 0]],
           'fill-extrusion-opacity': 0.6,
         },
       });
@@ -127,7 +162,7 @@ export class MapShellComponent {
 
   private ensureVehicleLayer() {
     if (!this.map || !this.mapReady) return;
-    
+        
     // Remove existing source and layer if they exist (cleanup)
     if (this.map.getLayer(this.layerId)) {
       this.map.removeLayer(this.layerId);
@@ -230,6 +265,7 @@ export class MapShellComponent {
       for (const key in map) {
         this.routeColorMap.set(key, map[key]);
       }
+      this.routes.set(rows);
       this.updateVehicleLayer();
     });
   }
@@ -253,5 +289,70 @@ export class MapShellComponent {
     let h = 0;
     for (let i = 0; i < raw.length; i++) h = (h * 31 + raw.charCodeAt(i)) >>> 0;
     return this.palette[h % this.palette.length];
+  }
+
+  // ----- Route streets overlay -----
+  selectRoute(routeId: string) {
+    this.currentRouteId = routeId;
+    this.api.routeStreets(routeId).subscribe(fc => {
+      if (!this.map) return;
+      const srcId = 'route-streets-src';
+      const layerId = 'route-streets-layer';
+      if (!this.map.getSource(srcId)) {
+        this.map.addSource(srcId, { type: 'geojson', data: fc });
+      } else {
+        (this.map.getSource(srcId) as any).setData(fc);
+      }
+      if (!this.map.getLayer(layerId)) {
+        this.map.addLayer({
+          id: layerId,
+          type: 'line',
+          source: srcId,
+          layout: {
+            'line-join': 'round',
+            'line-cap': 'round'
+          },
+          paint: {
+            'line-color': this.colorForRoute(routeId),
+            'line-width': 4,
+            'line-opacity': 0.9,
+            'line-blur': 0.2
+          }
+        });
+      } else {
+        this.map.setPaintProperty(layerId, 'line-color', this.colorForRoute(routeId));
+      }
+      // Fit bounds to the route
+      try {
+        const bbox = this.computeBbox(fc);
+        if (bbox) this.map.fitBounds(bbox as any, { padding: 40, duration: 500 });
+      } catch {}
+    });
+  }
+
+  private ensureRouteLayer() {
+    if (!this.map || !this.currentRouteId) return;
+    // re-select to re-add source/layer after style change
+    this.selectRoute(this.currentRouteId);
+  }
+
+  private computeBbox(fc: any): [number, number, number, number] | null {
+    if (!fc || !fc.features || !fc.features.length) return null;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const f of fc.features) {
+      const geom = f.geometry;
+      if (!geom) continue;
+      const coords = geom.type === 'LineString' ? [geom.coordinates] : geom.coordinates;
+      for (const line of coords) {
+        for (const [x,y] of line) {
+          if (x < minX) minX = x;
+          if (y < minY) minY = y;
+          if (x > maxX) maxX = x;
+          if (y > maxY) maxY = y;
+        }
+      }
+    }
+    if (minX === Infinity) return null;
+    return [minX, minY, maxX, maxY];
   }
 }
