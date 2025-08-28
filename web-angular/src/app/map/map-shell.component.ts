@@ -20,9 +20,45 @@ export class MapShellComponent {
   currentStyle = 'liberty';
   // Route-colored markers
   private routeColorMap = new Map<string, string>();
+  private routeMeta = new Map<string, RouteRow>();
   private palette = ['#2563EB','#F59E0B','#10B981','#EF4444','#8B5CF6','#06B6D4','#84CC16','#D946EF','#F97316','#22D3EE'];
   routes = signal<RouteRow[]>([]);
   currentRouteId: string | null = null;
+  unit: 'mph' | 'kmh' = ((globalThis as any).localStorage?.getItem('unit') as any) === 'kmh' ? 'kmh' : 'mph';
+  private popup: maplibregl.Popup | null = null;
+  private pinned = false;
+  private pinnedId: string | null = null;
+  private onMouseEnter = (e: any) => {
+    if (!e?.features?.length) return;
+    this.map.getCanvas().style.cursor = 'pointer';
+    const f = e.features[0];
+    if (!this.pinned) this.showVehiclePopup(f, e.lngLat);
+  };
+  private onMouseMove = (e: any) => {
+    if (!e?.features?.length) return;
+    const f = e.features[0];
+    if (!this.pinned) this.updateVehiclePopup(f, e.lngLat);
+  };
+  private onMouseLeave = () => {
+    this.map.getCanvas().style.cursor = '';
+    if (!this.pinned) this.removePopup();
+  };
+  private onLayerClick = (e: any) => {
+    if (!e?.features?.length) return;
+    const f = e.features[0];
+    this.pinned = true;
+    this.pinnedId = f.properties?.id || null;
+    this.showVehiclePopup(f, e.lngLat);
+  };
+  private onMapClick = (e: any) => {
+    // Unpin if clicking outside any vehicle feature
+    const feats = this.map.queryRenderedFeatures(e.point, { layers: [this.layerId] });
+    if (!feats.length) {
+      this.pinned = false;
+      this.pinnedId = null;
+      this.removePopup();
+    }
+  };
 
   styles: Record<string, string> = {
     liberty: 'https://tiles.openfreemap.org/styles/liberty',
@@ -66,6 +102,18 @@ export class MapShellComponent {
     this.map.addControl(new maplibregl.NavigationControl(), 'top-right');
     this.map.addControl(new maplibregl.ScaleControl({ unit: 'imperial' }));
 
+    // ESC key to unpin/close popup
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        this.pinned = false;
+        this.pinnedId = null;
+        this.removePopup();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    // Store reference for removal in destroy
+    (this as any)._onKey = onKey;
+
     // Ensure vehicles layer exists on initial load and whenever the style changes
     this.map.on('load', () => {
       this.mapReady = true;
@@ -85,6 +133,21 @@ export class MapShellComponent {
         this.disable3DBuildings();
       }
     });
+  }
+  ngOnDestroy() {
+    try {
+      const onKey = (this as any)._onKey as ((e: KeyboardEvent)=>void) | undefined;
+      if (onKey) window.removeEventListener('keydown', onKey);
+    } catch {}
+    try {
+      if (this.map) {
+        this.map.off('mouseenter', this.layerId, this.onMouseEnter);
+        this.map.off('mousemove', this.layerId, this.onMouseMove);
+        this.map.off('mouseleave', this.layerId, this.onMouseLeave);
+        this.map.off('click', this.layerId, this.onLayerClick);
+        this.map.off('click', this.onMapClick);
+      }
+    } catch {}
   }
 
   setBase(styleKey: 'liberty' | 'bright' | 'positron' | '3d') {
@@ -191,6 +254,20 @@ export class MapShellComponent {
         'circle-stroke-color': '#ffffff',
       },
     });
+
+    // Bind hover/click interactions for popup
+    try {
+      this.map.off('mouseenter', this.layerId, this.onMouseEnter);
+      this.map.off('mousemove', this.layerId, this.onMouseMove);
+      this.map.off('mouseleave', this.layerId, this.onMouseLeave);
+      this.map.off('click', this.layerId, this.onLayerClick);
+      this.map.off('click', this.onMapClick);
+    } catch {}
+    this.map.on('mouseenter', this.layerId, this.onMouseEnter);
+    this.map.on('mousemove', this.layerId, this.onMouseMove);
+    this.map.on('mouseleave', this.layerId, this.onMouseLeave);
+    this.map.on('click', this.layerId, this.onLayerClick);
+    this.map.on('click', this.onMapClick);
   }
 
   private poll() {
@@ -208,7 +285,16 @@ export class MapShellComponent {
       this.ensureVehicleLayer();
       return;
     }
-    src.setData(this.vehiclesToGeoJSON(this.vehicles()));
+    const fc = this.vehiclesToGeoJSON(this.vehicles());
+    src.setData(fc);
+    // If pinned, keep popup synced to the pinned vehicle
+    if (this.pinned && this.pinnedId && this.popup) {
+      const found = (fc.features as any[]).find(f => f.properties?.id === this.pinnedId);
+      if (found) {
+        const [x, y] = found.geometry.coordinates;
+        this.popup.setLngLat({ lng: x, lat: y }).setHTML(this.popupHTML(found));
+      }
+    }
   }
 
   private vehiclesToGeoJSON(vs: Vehicle[]) {
@@ -244,7 +330,16 @@ export class MapShellComponent {
               ts: ts,
               color: this.colorForRoute(v.route_id),
               speed: speed,
-              heading: heading
+              heading: heading,
+              feed: (v as any).feed || undefined,
+              label: (v as any).label || undefined,
+              license_plate: (v as any).license_plate || undefined,
+              trip_id: (v as any).trip_id || undefined,
+              current_status: (v as any).current_status ?? undefined,
+              stop_id: (v as any).stop_id || undefined,
+              current_stop_sequence: (v as any).current_stop_sequence ?? undefined,
+              occupancy_status: (v as any).occupancy_status ?? undefined,
+              occupancy_percentage: (v as any).occupancy_percentage ?? undefined,
             },
             geometry: { type: 'Point', coordinates: [lon, lat] }
           };
@@ -255,10 +350,14 @@ export class MapShellComponent {
   private loadRoutes() {
     this.api.routes().subscribe((rows: RouteRow[]) => {
       const map: { [key: string]: string } = {};
+      this.routeMeta.clear();
       for (const r of rows) {
         const color = this.normalizeHex(r.color);
         const ids = [r.route_id, this.unprefixed(r.route_id)];
-        for (const id of ids) if (id) map[id] = color;
+        for (const id of ids) if (id) {
+          map[id] = color;
+          this.routeMeta.set(id, r);
+        }
       }
       // Convert object to Map
       this.routeColorMap.clear();
@@ -354,5 +453,153 @@ export class MapShellComponent {
     }
     if (minX === Infinity) return null;
     return [minX, minY, maxX, maxY];
+  }
+
+  // ----- Popup + formatting helpers -----
+  toggleUnit(next?: 'mph' | 'kmh') {
+    this.unit = next || (this.unit === 'mph' ? 'kmh' : 'mph');
+    try { (globalThis as any).localStorage?.setItem('unit', this.unit); } catch {}
+    // Refresh popup to reflect units
+    if (this.pinned && this.popup && this.pinnedId) {
+      const vs = this.vehicles();
+      const v = vs.find(x => x.id === this.pinnedId);
+      if (v) {
+        this.popup.setHTML(this.popupHTML({ properties: { ...v, color: this.colorForRoute(v.route_id) } } as any));
+      }
+    }
+  }
+
+  private routeDisplay(routeId: string): string {
+    const r = this.routeMeta.get(routeId) || this.routeMeta.get(this.unprefixed(routeId));
+    if (!r) return routeId || 'UNKNOWN';
+    const sn = r.short_name || '';
+    const ln = r.long_name || '';
+    if (sn && ln) return `${sn} - ${ln}`;
+    return sn || ln || routeId;
+  }
+
+  private formatSpeed(mps: number | undefined | null): string {
+    if (!mps || !isFinite(mps) || mps <= 0) return '—';
+    const mph = mps * 2.236936;
+    const kmh = mps * 3.6;
+    const val = this.unit === 'mph' ? mph : kmh;
+    return `${Math.round(val)} ${this.unit}`;
+  }
+
+  private formatHeading(deg: number | undefined | null): string {
+    if (deg == null || !isFinite(deg)) return '—';
+    let d = ((deg % 360) + 360) % 360;
+    const dirs = ['N','NE','E','SE','S','SW','W','NW','N'];
+    const idx = Math.round(d / 45);
+    return `${Math.round(d)}° (${dirs[idx]})`;
+  }
+
+  private timeAgo(tsSec: number): string {
+    const s = Math.max(0, Math.floor(Date.now()/1000 - tsSec));
+    if (s < 60) return `${s}s ago`;
+    const m = Math.floor(s/60);
+    if (m < 60) return `${m}m ago`;
+    const h = Math.floor(m/60);
+    return `${h}h ago`;
+  }
+
+  private occupancyLabel(n: number | undefined | null): string | null {
+    if (n == null) return null;
+    const map: Record<number, string> = {
+      0: 'Empty',
+      1: 'Many seats',
+      2: 'Few seats',
+      3: 'Standing room',
+      4: 'Crushed',
+      5: 'Full',
+      6: 'Not accepting',
+    };
+    return map[n] || null;
+  }
+
+  private statusLabel(n: number | undefined | null): string | null {
+    if (n == null) return null;
+    const map: Record<number, string> = {
+      0: 'Incoming',
+      1: 'Stopped',
+      2: 'In transit',
+    };
+    return map[n] || null;
+  }
+
+  private popupHTML(f: any): string {
+    const p = f?.properties || {};
+    const rid = p.route_id || 'UNKNOWN';
+    const title = this.routeDisplay(rid);
+    const updated = this.timeAgo(Number(p.ts || 0));
+    const speed = this.formatSpeed(Number(p.speed));
+    const heading = this.formatHeading(Number(p.heading));
+    const veh = p.label || p.license_plate || p.id || 'Vehicle';
+    const feed = p.feed ? `<div><span style="opacity:.7">Feed:</span> ${this.escape(p.feed)}</div>` : '';
+    const status = this.statusLabel(p.current_status);
+    const statusHtml = status ? `<div><span style="opacity:.7">Status:</span> ${status}</div>` : '';
+    const occ = this.occupancyLabel(p.occupancy_status);
+    const occPct = (p.occupancy_percentage != null && isFinite(Number(p.occupancy_percentage))) ? ` (${Math.round(Number(p.occupancy_percentage))}%)` : '';
+    const occHtml = occ ? `<div><span style="opacity:.7">Occupancy:</span> ${occ}${occPct}</div>` : '';
+
+    return `
+      <div style="min-width:220px; font: 13px/1.35 system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;">
+        <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+          <span style="display:inline-block; width:10px; height:10px; border-radius:50%; background:${this.colorForRoute(rid)};"></span>
+          <div style="font-weight:600;">${this.escape(title)}</div>
+        </div>
+        <div style="margin:4px 0 8px; color:#374151;">
+          <div><span style="opacity:.7">Vehicle:</span> ${this.escape(veh)}</div>
+          <div><span style="opacity:.7">Updated:</span> ${updated}</div>
+          <div><span style="opacity:.7">Speed:</span> ${speed}</div>
+          <div><span style="opacity:.7">Heading:</span> ${heading}</div>
+          ${feed}
+          ${statusHtml}
+          ${occHtml}
+        </div>
+        <div style="margin-top:8px; display:flex; gap:6px; align-items:center;">
+          <button data-unit="mph" style="padding:2px 6px; border-radius:4px; border:1px solid #d1d5db; background:${this.unit==='mph'?'#eef2ff':'#fff'}; cursor:pointer;">mph</button>
+          <button data-unit="kmh" style="padding:2px 6px; border-radius:4px; border:1px solid #d1d5db; background:${this.unit==='kmh'?'#eef2ff':'#fff'}; cursor:pointer;">km/h</button>
+          <span style="margin-left:auto; opacity:.6; font-size:12px;">Click to ${this.pinned ? 'unpin map' : 'pin'}</span>
+        </div>
+      </div>`;
+  }
+
+  private showVehiclePopup(f: any, lngLat: any) {
+    if (!this.popup) {
+      this.popup = new maplibregl.Popup({ closeButton: true, closeOnMove: false, closeOnClick: false, offset: 12 });
+      try {
+        this.popup.on('close', () => {
+          this.pinned = false;
+          this.pinnedId = null;
+          this.popup = null;
+        });
+      } catch {}
+    }
+    this.popup.setLngLat(lngLat).setHTML(this.popupHTML(f)).addTo(this.map);
+    // attach unit toggle listeners within popup
+    setTimeout(() => {
+      const el = this.popup?.getElement();
+      if (!el) return;
+      const mphBtn = el.querySelector('button[data-unit="mph"]');
+      const kmhBtn = el.querySelector('button[data-unit="kmh"]');
+      mphBtn?.addEventListener('click', () => this.toggleUnit('mph'));
+      kmhBtn?.addEventListener('click', () => this.toggleUnit('kmh'));
+    }, 0);
+  }
+
+  private updateVehiclePopup(f: any, lngLat: any) {
+    if (!this.popup) return this.showVehiclePopup(f, lngLat);
+    this.popup.setLngLat(lngLat).setHTML(this.popupHTML(f));
+  }
+
+  private removePopup() {
+    try { this.popup?.remove(); } catch {}
+    this.popup = null;
+  }
+
+  private escape(s: any): string {
+    const t = String(s ?? '');
+    return t.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'} as any)[c] || c);
   }
 }
