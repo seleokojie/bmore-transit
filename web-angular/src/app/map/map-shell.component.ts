@@ -393,40 +393,90 @@ export class MapShellComponent {
   // ----- Route streets overlay -----
   selectRoute(routeId: string) {
     this.currentRouteId = routeId;
-    this.api.routeStreets(routeId).subscribe(fc => {
-      if (!this.map) return;
-      const srcId = 'route-streets-src';
-      const layerId = 'route-streets-layer';
-      if (!this.map.getSource(srcId)) {
-        this.map.addSource(srcId, { type: 'geojson', data: fc });
-      } else {
-        (this.map.getSource(srcId) as any).setData(fc);
-      }
-      if (!this.map.getLayer(layerId)) {
-        this.map.addLayer({
-          id: layerId,
-          type: 'line',
-          source: srcId,
-          layout: {
-            'line-join': 'round',
-            'line-cap': 'round'
-          },
-          paint: {
-            'line-color': this.colorForRoute(routeId),
-            'line-width': 4,
-            'line-opacity': 0.9,
-            'line-blur': 0.2
-          }
-        });
-      } else {
-        this.map.setPaintProperty(layerId, 'line-color', this.colorForRoute(routeId));
-      }
-      // Fit bounds to the route
+    if (!this.map) return;
+
+    // Remove any existing sources/layers for route overlay
+    try {
+      if (this.map.getLayer('route-streets-vt-layer')) this.map.removeLayer('route-streets-vt-layer');
+    } catch {}
+    try {
+      if (this.map.getSource('route-streets-vt-src')) this.map.removeSource('route-streets-vt-src');
+    } catch {}
+    try {
+      if (this.map.getLayer('route-streets-layer')) this.map.removeLayer('route-streets-layer');
+    } catch {}
+    try {
+      if (this.map.getSource('route-streets-src')) this.map.removeSource('route-streets-src');
+    } catch {}
+
+    // Add vector tile source and layer (fast rendering for long routes)
+    try {
+      this.map.addSource('route-streets-vt-src', {
+        type: 'vector',
+        tiles: [`${(globalThis as any)['API_BASE'] || (window as any)['API_BASE'] || ''}/routes/${routeId}/streets.mvt/{z}/{x}/{y}`],
+        minzoom: 6,
+        maxzoom: 20
+      } as any);
+      this.map.addLayer({
+        id: 'route-streets-vt-layer',
+        type: 'line',
+        source: 'route-streets-vt-src',
+        'source-layer': 'streets',
+        layout: { 'line-join': 'round', 'line-cap': 'round' },
+        paint: {
+          'line-color': this.colorForRoute(routeId),
+          'line-width': 4,
+          'line-opacity': 0.9,
+          'line-blur': 0.2,
+        }
+      });
+    } catch {}
+
+    // Fit bounds quickly using bbox endpoint (very small response)
+    this.api.routeStreetsBbox(routeId).subscribe(bbox => {
       try {
-        const bbox = this.computeBbox(fc);
         if (bbox) this.map.fitBounds(bbox as any, { padding: 40, duration: 500 });
       } catch {}
     });
+
+    // Fallback: if vector tiles fail for some reason, load GeoJSON
+    setTimeout(() => {
+      try {
+        if (!this.map.getSource('route-streets-vt-src')) {
+          this.api.routeStreets(routeId).subscribe(fc => {
+            if (!this.map) return;
+            const srcId = 'route-streets-src';
+            const layerId = 'route-streets-layer';
+            if (!this.map.getSource(srcId)) {
+              this.map.addSource(srcId, { type: 'geojson', data: fc });
+            } else {
+              (this.map.getSource(srcId) as any).setData(fc);
+            }
+            if (!this.map.getLayer(layerId)) {
+              this.map.addLayer({
+                id: layerId,
+                type: 'line',
+                source: srcId,
+                layout: { 'line-join': 'round', 'line-cap': 'round' },
+                paint: {
+                  'line-color': this.colorForRoute(routeId),
+                  'line-width': 4,
+                  'line-opacity': 0.9,
+                  'line-blur': 0.2
+                }
+              });
+            } else {
+              this.map.setPaintProperty(layerId, 'line-color', this.colorForRoute(routeId));
+            }
+            // Fit bounds if bbox wasn't available
+            try {
+              const bbox = this.computeBbox(fc);
+              if (bbox) this.map.fitBounds(bbox as any, { padding: 40, duration: 500 });
+            } catch {}
+          });
+        }
+      } catch {}
+    }, 0);
   }
 
   private ensureRouteLayer() {
