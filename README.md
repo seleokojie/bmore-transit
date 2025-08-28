@@ -60,6 +60,10 @@ For route geometry overlays, the system uses Valhalla if available. You can also
     - `MATCH_SEARCH_RADIUS` (default 50): Valhalla search radius in meters.
     - `VALHALLA_MAX_POINTS` (default 15000): max points per Valhalla request before chunking.
 
+#### Fast display (vector tiles)
+- API serves per‑route vector tiles at `GET /routes/{route_id}/streets.mvt/{z}/{x}/{y}` and a fast bbox at `GET /routes/{route_id}/bbox`.
+- The web app uses this MVT source for route overlays for snappy rendering of long routes and fits using bbox first. Falls back to GeoJSON if needed.
+
 ## CI (placeholder)
 - Lint/format/tests via `make format` and `make test`.
 
