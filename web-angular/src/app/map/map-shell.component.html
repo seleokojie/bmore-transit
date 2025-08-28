@@ -2,3 +2,18 @@
 <div style="position:absolute; top:8px; left:8px; background:#fff; padding:8px; border-radius:6px; box-shadow:0 1px 4px rgba(0,0,0,.2)">
   Vehicles: {{ (vehicles() || []).length }}
 </div>
+
+<div class="style-switcher">
+  <button title="Positron" (click)="setBase('positron')" [class.active]="currentStyle==='positron'" [attr.aria-pressed]="currentStyle==='positron'">
+    <svg width="24" height="24" viewBox="0 0 24 24"><rect width="24" height="24" rx="4" fill="#f3f4f6"/><path d="M4 12h16" stroke="#9ca3af"/><path d="M12 4v16" stroke="#9ca3af"/></svg>
+  </button>
+  <button title="Bright" (click)="setBase('bright')" [class.active]="currentStyle==='bright'" [attr.aria-pressed]="currentStyle==='bright'">
+    <svg width="24" height="24" viewBox="0 0 24 24"><rect width="24" height="24" rx="4" fill="#e0f2fe"/><circle cx="7" cy="8" r="2" fill="#f59e0b"/><rect x="12" y="12" width="8" height="6" fill="#22c55e"/></svg>
+  </button>
+  <button title="Liberty" (click)="setBase('liberty')" [class.active]="currentStyle==='liberty'" [attr.aria-pressed]="currentStyle==='liberty'">
+    <svg width="24" height="24" viewBox="0 0 24 24"><rect width="24" height="24" rx="4" fill="#eef2ff"/><path d="M4 18l6-6 4 3 6-8" stroke="#6366f1" stroke-width="2" fill="none"/></svg>
+  </button>
+  <button title="3D" (click)="setBase('3d')" [class.active]="currentStyle==='3d'" [attr.aria-pressed]="currentStyle==='3d'">
+    <svg width="24" height="24" viewBox="0 0 24 24"><rect width="24" height="24" rx="4" fill="#f5f5f5"/><path d="M6 10l6-4 6 4-6 4-6-4z" fill="#9ca3af"/><path d="M6 10v6l6 4v-6l-6-4z" fill="#bdbdbd"/><path d="M12 14v6l6-4v-6l-6 4z" fill="#d1d5db"/></svg>
+  </button>
+</div>

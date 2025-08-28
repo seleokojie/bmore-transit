@@ -1,3 +1,29 @@
 @import 'maplibre-gl/dist/maplibre-gl.css';
 
 #map { width: 100vw; height: 100vh; }
+
+.style-switcher {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  display: flex;
+  gap: 6px;
+  background: rgba(255,255,255,0.9);
+  padding: 6px;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0,0,0,.15);
+}
+.style-switcher button {
+  border: none;
+  background: transparent;
+  padding: 2px;
+  cursor: pointer;
+  border-radius: 6px;
+}
+.style-switcher button:hover {
+  box-shadow: 0 0 0 2px rgba(0,0,0,.1) inset;
+}
+.style-switcher button.active {
+  box-shadow: 0 0 0 2px #2563eb inset;
+  background: rgba(37,99,235,0.08);
+}
