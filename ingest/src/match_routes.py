@@ -113,22 +113,75 @@ def upsert_route_geom(route_id: str, mls_geojson: dict | None, fallback_lines: l
         )
 
 
+def chunk_points(points, max_size=15000):
+    """Split points into chunks that respect Valhalla's 16k limit"""
+    for i in range(0, len(points), max_size):
+        yield points[i:i + max_size]
+
+
 def process_route(route_id: str):
     lines = densified_shapes_geojson(route_id)
     if not lines:
         print(f"no shapes for {route_id}")
         return
-    points = []
+    
+    total_points = 0
+    
     for ln in lines:
-        points.extend(geojson_lines_to_points(ln))
-    try:
-        resp = call_valhalla(points)
-        mls = edges_to_multilines(resp)
-        upsert_route_geom(route_id, mls, lines)
-        print("matched:", route_id)
-    except Exception as e:
-        print("valhalla error for", route_id, e)
-        upsert_route_geom(route_id, None, lines)
+        points = geojson_lines_to_points(ln)
+        total_points += len(points)
+        
+    print(f"processing {route_id}: {total_points} points across {len(lines)} shapes")
+    
+    # If total points exceed limit, process each shape individually
+    if total_points > 15000:
+        print(f"  splitting into individual shapes due to size ({total_points} > 15000)")
+        all_multilines = []
+        
+        for i, ln in enumerate(lines):
+            points = geojson_lines_to_points(ln)
+            if len(points) > 15000:
+                print(f"  shape {i} too large ({len(points)} points), chunking...")
+                for chunk_idx, chunk in enumerate(chunk_points(points)):
+                    try:
+                        resp = call_valhalla(chunk)
+                        mls = edges_to_multilines(resp)
+                        if mls and mls.get("coordinates"):
+                            all_multilines.extend(mls["coordinates"])
+                        print(f"    chunk {chunk_idx}: {len(chunk)} points -> matched")
+                    except Exception as e:
+                        print(f"    chunk {chunk_idx} error: {e}")
+            else:
+                try:
+                    resp = call_valhalla(points)
+                    mls = edges_to_multilines(resp)
+                    if mls and mls.get("coordinates"):
+                        all_multilines.extend(mls["coordinates"])
+                    print(f"  shape {i}: {len(points)} points -> matched")
+                except Exception as e:
+                    print(f"  shape {i} error: {e}")
+        
+        # Combine all matched multilines
+        if all_multilines:
+            combined_mls = {"type": "MultiLineString", "coordinates": all_multilines}
+            upsert_route_geom(route_id, combined_mls, lines)
+            print(f"matched: {route_id} ({len(all_multilines)} segments)")
+        else:
+            upsert_route_geom(route_id, None, lines)
+            print(f"no matches: {route_id}")
+    else:
+        # Original logic for smaller routes
+        points = []
+        for ln in lines:
+            points.extend(geojson_lines_to_points(ln))
+        try:
+            resp = call_valhalla(points)
+            mls = edges_to_multilines(resp)
+            upsert_route_geom(route_id, mls, lines)
+            print("matched:", route_id)
+        except Exception as e:
+            print("valhalla error for", route_id, e)
+            upsert_route_geom(route_id, None, lines)
 
 
 def main():
