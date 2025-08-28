@@ -1,4 +1,4 @@
-.PHONY: up down logs seed test format openapi
+.PHONY: up down logs seed test format openapi dev
 
 up:
 	docker compose up --build
@@ -32,3 +32,9 @@ streets:
 	  -e MATCH_OVERWRITE \
 	  -e VALHALLA_MAX_POINTS \
 	  ingest python -m src.match_routes
+
+dev:
+	# Start infra in the background
+	docker compose up -d db redis valhalla
+	# Start API (reload), ingest (watch), and Angular dev server with overlay
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile dev up api ingest web-dev

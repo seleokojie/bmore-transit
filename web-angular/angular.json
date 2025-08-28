@@ -15,7 +15,7 @@
             "browser": "src/main.ts",
             "tsConfig": "tsconfig.app.json",
             "polyfills": ["zone.js"],
-            "assets": ["src/favicon.ico", "src/assets"],
+            "assets": ["src/favicon.ico", "src/assets", "src/env.js"],
             "styles": ["src/styles.css"]
           },
           "configurations": {
@@ -24,15 +24,30 @@
               "outputHashing": "all",
               "sourceMap": false,
               "extractLicenses": true
+            },
+            "development": {
+              "optimization": false,
+              "outputHashing": "none",
+              "sourceMap": true,
+              "extractLicenses": false
             }
           },
-          "defaultConfiguration": "production"
+          "defaultConfiguration": "development"
         },
         "serve": {
           "builder": "@angular-devkit/build-angular:dev-server",
           "options": {
-            "buildTarget": "web-angular:build"
-          }
+            "buildTarget": "web-angular:build:development"
+          },
+          "configurations": {
+            "production": {
+              "buildTarget": "web-angular:build:production"
+            },
+            "development": {
+              "buildTarget": "web-angular:build:development"
+            }
+          },
+          "defaultConfiguration": "development"
         }
       }
     }
