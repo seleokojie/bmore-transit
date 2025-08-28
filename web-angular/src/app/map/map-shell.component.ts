@@ -1,5 +1,5 @@
 import { Component, inject, signal } from '@angular/core';
-import { ApiService, Vehicle } from '../core/api.service';
+import { ApiService, Vehicle, RouteRow } from '../core/api.service';
 import maplibregl from 'maplibre-gl';
 
 @Component({
@@ -15,6 +15,9 @@ export class MapShellComponent {
   sourceId = 'vehicles-src';
   layerId = 'vehicles-layer';
   currentStyle = 'liberty';
+  // Route-colored markers
+  private routeColorMap = new Map<string, string>();
+  private palette = ['#2563EB','#F59E0B','#10B981','#EF4444','#8B5CF6','#06B6D4','#84CC16','#D946EF','#F97316','#22D3EE'];
 
   styles: Record<string, string> = {
     liberty: 'https://tiles.openfreemap.org/styles/liberty',
@@ -29,6 +32,8 @@ export class MapShellComponent {
     this.poll();
     // Poll every 5s
     setInterval(() => this.poll(), 5000);
+    // Load route colors
+    this.loadRoutes();
   }
 
   ngAfterViewInit() {
@@ -52,9 +57,8 @@ export class MapShellComponent {
     this.map.addControl(new maplibregl.ScaleControl({ unit: 'imperial' }));
 
     // Ensure vehicles layer exists on initial load and whenever the style changes
-    const ensure = () => this.ensureVehicleLayer();
-    this.map.on('load', ensure);
-    this.map.on('style.load', ensure);
+    this.map.on('load', () => this.ensureVehicleLayer());
+    this.map.on('style.load', () => this.ensureVehicleLayer());
   }
 
   setBase(styleKey: 'liberty' | 'bright' | 'positron' | '3d') {
@@ -104,27 +108,46 @@ export class MapShellComponent {
 
   private ensureVehicleLayer() {
     if (!this.map) return;
-    if (!this.map.getSource(this.sourceId)) {
-      this.map.addSource(this.sourceId, { type: 'geojson', data: this.vehiclesToGeoJSON(this.vehicles()) });
+    
+    console.log('Ensuring vehicle layer...');
+    
+    // Remove existing source and layer if they exist (cleanup)
+    if (this.map.getLayer(this.layerId)) {
+      console.log('Removing existing vehicle layer');
+      this.map.removeLayer(this.layerId);
     }
-    if (!this.map.getLayer(this.layerId)) {
-      this.map.addLayer({
-        id: this.layerId,
-        type: 'circle',
-        source: this.sourceId,
-        paint: {
-          'circle-radius': 5,
-          'circle-stroke-width': 1,
-          'circle-color': '#1d4ed8',
-          'circle-stroke-color': '#ffffff',
-        },
-      });
+    if (this.map.getSource(this.sourceId)) {
+      console.log('Removing existing vehicle source');
+      this.map.removeSource(this.sourceId);
     }
-    this.updateVehicleLayer();
+    
+    const vehicleData = this.vehiclesToGeoJSON(this.vehicles());
+    console.log(`Adding vehicle source with ${vehicleData.features.length} vehicles`);
+    
+    // Add source with current vehicle data
+    this.map.addSource(this.sourceId, { 
+      type: 'geojson', 
+      data: vehicleData
+    });
+    
+    console.log('Adding vehicle layer');
+    // Add layer
+    this.map.addLayer({
+      id: this.layerId,
+      type: 'circle',
+      source: this.sourceId,
+      paint: {
+        'circle-radius': 5,
+        'circle-stroke-width': 1,
+        'circle-color': ['get','color'],
+        'circle-stroke-color': '#ffffff',
+      },
+    });
   }
 
   private poll() {
   this.api.vehicles().subscribe((vs: Vehicle[]) => {
+      console.log(`Polled ${vs.length} vehicles`);
       this.vehicles.set(vs);
       this.updateVehicleLayer();
     });
@@ -133,7 +156,13 @@ export class MapShellComponent {
   private updateVehicleLayer() {
     if (!this.map || !this.map.getSource) return;
     const src = this.map.getSource(this.sourceId);
-    if (!src) return;
+    if (!src) {
+      // Source doesn't exist, recreate the whole layer
+      console.log('Vehicle source missing during update, ensuring layer...');
+      this.ensureVehicleLayer();
+      return;
+    }
+    console.log(`Updating vehicle source with ${this.vehicles().length} vehicles`);
     src.setData(this.vehiclesToGeoJSON(this.vehicles()));
   }
 
@@ -142,9 +171,43 @@ export class MapShellComponent {
       type: 'FeatureCollection',
       features: vs.map(v => ({
         type: 'Feature',
-        properties: { id: v.id, route_id: v.route_id, ts: v.ts },
+        properties: { id: v.id, route_id: v.route_id, ts: v.ts, color: this.colorForRoute(v.route_id) },
         geometry: { type: 'Point', coordinates: [v.lon, v.lat] }
       }))
     };
+  }
+
+  private loadRoutes() {
+    this.api.routes().subscribe((rows: RouteRow[]) => {
+      const map = new Map<string,string>();
+      for (const r of rows) {
+        const color = this.normalizeHex(r.color);
+        const ids = [r.route_id, this.unprefixed(r.route_id)];
+        for (const id of ids) if (id) map.set(id, color);
+      }
+      this.routeColorMap = map;
+      this.updateVehicleLayer();
+    });
+  }
+
+  private normalizeHex(c?: string): string {
+    if (!c) return '#1d4ed8';
+    const hex = c.startsWith('#') ? c : `#${c}`;
+    return /^#?[0-9a-fA-F]{6}$/.test(hex) ? hex.replace(/^#?/, '#').toUpperCase() : '#1d4ed8';
+  }
+
+  private unprefixed(id?: string): string {
+    if (!id) return '';
+    const i = id.indexOf(':');
+    return i >= 0 ? id.slice(i+1) : id;
+  }
+
+  private colorForRoute(routeId?: string): string {
+    const raw = routeId || '';
+    const found = this.routeColorMap.get(raw) || this.routeColorMap.get(this.unprefixed(raw));
+    if (found) return found;
+    let h = 0;
+    for (let i = 0; i < raw.length; i++) h = (h * 31 + raw.charCodeAt(i)) >>> 0;
+    return this.palette[h % this.palette.length];
   }
 }
