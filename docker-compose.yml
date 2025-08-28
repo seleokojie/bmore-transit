@@ -1,0 +1,46 @@
+version: "3.9"
+services:
+  db:
+    image: postgis/postgis:16-3.4
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: transit
+      TZ: ${TZ:-America/New_York}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./infra/dev/postgres-init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    ports: ["5432:5432"]
+
+  redis:
+    image: redis:7
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    ports: ["6379:6379"]
+
+  api:
+    build: ./api
+    env_file: .env
+    environment:
+      - TZ=${TZ:-America/New_York}
+    depends_on: [db, redis]
+    ports: ["8080:8080"]
+
+  ingest:
+    build: ./ingest
+    env_file: .env
+    environment:
+      - TZ=${TZ:-America/New_York}
+    depends_on: [db, redis]
+
+  web:
+    build: ./web-angular
+    environment:
+      - API_BASE=http://localhost:8080
+      - MAPBOX_ACCESS_TOKEN=${MAPBOX_ACCESS_TOKEN:-}
+      - TZ=${TZ:-America/New_York}
+    ports: ["4200:80"]
+    depends_on: [api]
+
+volumes:
+  pgdata:
+

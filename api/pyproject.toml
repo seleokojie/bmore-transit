@@ -1,0 +1,18 @@
+[project]
+name = "bmore-transit-api"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi>=0.115.0",
+  "uvicorn[standard]>=0.30.0",
+  "pydantic>=2.7.0",
+  "pydantic-settings>=2.2.0",
+  "psycopg2-binary>=2.9.9",
+  "asyncpg>=0.29.0",
+  "redis>=5.0.0",
+  "python-dotenv>=1.0.0",
+  "prometheus-client>=0.20.0",
+]
+
+[tool.black]
+line-length = 100
