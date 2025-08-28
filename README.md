@@ -28,6 +28,21 @@ For route geometry overlays, the system uses Valhalla if available. You can also
 - Timezone: America/New_York
 - `make openapi` writes `packages/schemas/openapi.json`
 
+### Developer mode (hot reload)
+Use the dev compose overlay to get auto-reload for API and ingest, plus the Angular dev server:
+
+Single command:
+- `make dev`
+
+What it does:
+- Starts DB, Redis, Valhalla in the background, then runs API (reload), ingest (watch), and Angular dev server with the dev overlay in the foreground.
+
+Notes:
+- API reload mounts `./api/app` and runs `uvicorn ... --reload`.
+- Ingest mounts `./ingest/src` and uses `watchfiles` to restart on changes.
+- Web dev server runs at http://localhost:4200 using Angular’s hot reload. It reads `web-angular/src/env.js` for `API_BASE`/`MAP_STYLE_URL`.
+- The production `web` service is disabled in this dev profile. To run production web instead, use `docker compose up web` (or `--profile prod`).
+
 ### Web UI
 - Basemap (MapLibre): Defaults to OpenFreeMap Liberty style (no token): `https://tiles.openfreemap.org/styles/liberty`. Override at runtime with `MAP_STYLE_URL` in `.env` (injected to `env.js`).
 - Vehicles layer: hover shows a vehicle card; click to pin; press ESC or click close to dismiss.
